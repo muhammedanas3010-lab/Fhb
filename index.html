@@ -1,0 +1,516 @@
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  runApp(const ClothingBrandApp());
+}
+
+class ClothingBrandApp extends StatelessWidget {
+  const ClothingBrandApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Clothing Brand Manager',
+      theme: ThemeData(
+        primarySwatch: Colors.purple,
+        useMaterial3: true,
+      ),
+      home: const MainHomeScreen(),
+    );
+  }
+}
+
+class MainHomeScreen extends StatefulWidget {
+  const MainHomeScreen({super.key});
+
+  @override
+  State<MainHomeScreen> createState() => _MainHomeScreenState();
+}
+
+class _MainHomeScreenState extends State<MainHomeScreen> {
+  int _selectedIndex = 0;
+
+  final List<Widget> _screens = const [
+    ProfitLossScreen(),   // ഓട്ടോമാറ്റിക് പ്രൊഫിറ്റ് & ലോസ് സ്റ്റേറ്റ്‌മെന്റ്
+    CustomerListScreen(), // കസ്റ്റമേഴ്സ് & വാട്ട്‌സ്ആപ്പ് ബില്ലിംഗ്
+    EmployeeListScreen(), // എംപ്ലോയീസ് & ഓട്ടോമാറ്റിക് ശമ്പള ചെലവ്
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _screens[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) => setState(() => _selectedIndex = index),
+        type: BottomNavigationBarType.fixed,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.analytics),
+            label: 'പ്രൊഫിറ്റ് & ലോസ്',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.people),
+            label: 'കസ്റ്റമേഴ്‌സ്',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.badge),
+            label: 'എംപ്ലോയീസ്',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// 1. AUTOMATIC PROFIT & LOSS STATEMENT SCREEN
+// ==========================================
+class ProfitLossScreen extends StatelessWidget {
+  const ProfitLossScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    DateTime now = DateTime.now();
+    DateTime startOfMonth = DateTime(now.year, now.month, 1);
+    DateTime endOfMonth = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('പ്രൊഫിറ്റ് & ലോസ് സ്റ്റേറ്റ്‌മെന്റ്')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('customers')
+            .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth))
+            .where('createdAt', isLessThanOrEqualTo: Timestamp.fromDate(endOfMonth))
+            .snapshots(),
+        builder: (context, customerSnapshot) {
+          return StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('employees').snapshots(),
+            builder: (context, employeeSnapshot) {
+              if (customerSnapshot.connectionState == ConnectionState.waiting ||
+                  employeeSnapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              // 1. ആകെ വരുമാനം (Total Income) - കസ്റ്റമർ ഓർഡർ ബില്ലുകളിൽ നിന്ന് ഓട്ടോമാറ്റിക്കായി എടുക്കുന്നു
+              double totalRevenue = 0;
+              var customerDocs = customerSnapshot.data?.docs ?? [];
+              for (var doc in customerDocs) {
+                var data = doc.data() as Map<String, dynamic>;
+                totalRevenue += (data['billAmount'] ?? 0).toDouble();
+              }
+
+              // 2. ആകെ ചെലവ് (Total Expenses) - എംപ്ലോയീസിന്റെ ശമ്പളങ്ങൾ കൂട്ടിവെച്ച് ഓട്ടോമാറ്റിക്കായി കണക്കാക്കുന്നു
+              double totalSalaryExpense = 0;
+              var employeeDocs = employeeSnapshot.data?.docs ?? [];
+              for (var doc in employeeDocs) {
+                var data = doc.data() as Map<String, dynamic>;
+                totalSalaryExpense += (data['salary'] ?? 0).toDouble();
+              }
+
+              double netProfit = totalRevenue - totalSalaryExpense;
+              bool isProfitable = netProfit >= 0;
+
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  // മെയിൻ പ്രൊഫിറ്റ് കാർഡ്
+                  Card(
+                    elevation: 4,
+                    color: isProfitable ? Colors.green.shade50 : Colors.red.shade50,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20.0),
+                      child: Column(
+                        children: [
+                          Text(
+                            isProfitable ? 'മൊത്തം ലാഭം (Net Profit)' : 'മൊത്തം നഷ്ടം (Net Loss)',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: isProfitable ? Colors.green.shade800 : Colors.red.shade800,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            '₹${netProfit.abs()}',
+                            style: TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: isProfitable ? Colors.green.shade900 : Colors.red.shade900,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            '(${now.month}/${now.year} മാസത്തെ കണക്ക്)',
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // ഡീറ്റെയിൽഡ് ബ്രേക്ക്ഡൗൺ
+                  const Text(
+                    'വിശദമായ കണക്കുകൾ (Detailed Breakdown):',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // ഇൻകം ലിസ്റ്റ് ടൈൽ
+                  ExpansionTile(
+                    leading: const CircleAvatar(
+                      backgroundColor: Colors.green,
+                      child: Icon(Icons.arrow_downward, color: Colors.white),
+                    ),
+                    title: const Text('ആകെ വരുമാനം (Total Revenue)'),
+                    trailing: Text('₹$totalRevenue', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16)),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text('ഈ മാസത്തിലെ കസ്റ്റമർ ഓർഡറുകളിൽ നിന്നും ബില്ലുകളിൽ നിന്നും ലഭിച്ച ആകെ തുകയാണിത് (${customerDocs.length} ഓർഡറുകൾ).'),
+                      )
+                    ],
+                  ),
+
+                  // എക്സ്പെൻസ് ലിസ്റ്റ് ടൈൽ
+                  ExpansionTile(
+                    leading: const CircleAvatar(
+                      backgroundColor: Colors.red,
+                      child: Icon(Icons.arrow_upward, color: Colors.white),
+                    ),
+                    title: const Text('ആകെ ചെലവ് (Total Expenses - Salary)'),
+                    trailing: Text('₹$totalSalaryExpense', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red, fontSize: 16)),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text('ഈ മാസത്തെ ജീവനക്കാരുടെ ശമ്പളയിനത്തിലെ ആകെ ചെലവാണിത് (${employeeDocs.length} ജീവനക്കാർ).'),
+                      )
+                    ],
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ==========================================
+// 2. CUSTOMER MANAGEMENT WITH WHATSAPP
+// ==========================================
+class CustomerListScreen extends StatelessWidget {
+  const CustomerListScreen({super.key});
+
+  Future<void> _sendWhatsAppMessage({
+    required BuildContext context,
+    required String phone,
+    required String name,
+    required Map<String, dynamic> measurements,
+    required String customization,
+    required double billAmount,
+  }) async {
+    String formattedPhone = phone.replaceAll(RegExp(r'[^\d]'), '');
+    if (!formattedPhone.startsWith('91') && formattedPhone.length == 10) {
+      formattedPhone = '91$formattedPhone';
+    }
+
+    String message = '''
+*നമസ്കാരം $name,*
+നിങ്ങളുടെ ഓർഡർ വിവരങ്ങൾ താഴെ നൽകുന്നു:
+
+📏 *ഡ്രസ്സ് അളവുകൾ (Measurements):*
+• Chest: ${measurements['chest'] ?? '-'}
+• Waist: ${measurements['waist'] ?? '-'}
+• Hip: ${measurements['hip'] ?? '-'}
+• Length: ${measurements['length'] ?? '-'}
+• Shoulder: ${measurements['shoulder'] ?? '-'}
+
+✂️ *കസ്റ്റമൈസേഷൻ:*
+${customization.isEmpty ? 'ബാധകമല്ല' : customization}
+
+💰 *ആകെ ബിൽ തുക:* ₹$billAmount
+
+നന്ദി! ✨
+''';
+
+    final Uri whatsappUrl = Uri.parse(
+      'https://wa.me/$formattedPhone?text=${Uri.encodeComponent(message)}',
+    );
+
+    try {
+      if (await canLaunchUrl(whatsappUrl)) {
+        await launchUrl(whatsappUrl, mode: LaunchMode.externalApplication);
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('WhatsApp ആപ്പ് ഫോണിൽ ലഭ്യമായില്ല.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
+  void _addCustomerDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    final chestController = TextEditingController();
+    final waistController = TextEditingController();
+    final hipController = TextEditingController();
+    final lengthController = TextEditingController();
+    final shoulderController = TextEditingController();
+    final customNotesController = TextEditingController();
+    final billAmountController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('പുതിയ കസ്റ്റമറെ ചേർക്കുക'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAlignment.start,
+            children: [
+              TextField(controller: nameController, decoration: const InputDecoration(labelText: 'പേര്')),
+              TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'ഫോൺ നമ്പർ')),
+              TextField(
+                controller: billAmountController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'ബിൽ തുക (₹) - ഓട്ടോ പ്രൊഫിറ്റിൽ ചേർക്കപ്പെടും'),
+              ),
+              const SizedBox(height: 15),
+              const Text('അളവുകൾ (Inches):', style: TextStyle(fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: chestController, decoration: const InputDecoration(labelText: 'Chest'))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: waistController, decoration: const InputDecoration(labelText: 'Waist'))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: hipController, decoration: const InputDecoration(labelText: 'Hip'))),
+                ],
+              ),
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: lengthController, decoration: const InputDecoration(labelText: 'Length'))),
+                  const SizedBox(width: 8),
+                  Expanded(child: TextField(controller: shoulderController, decoration: const InputDecoration(labelText: 'Shoulder'))),
+                ],
+              ),
+              const SizedBox(height: 15),
+              const Text('കസ്റ്റമൈസേഷൻ വിവരങ്ങൾ:', style: TextStyle(fontWeight: FontWeight.bold)),
+              TextField(
+                controller: customNotesController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  hintText: 'Neck model, Sleeve design etc.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameController.text.isNotEmpty) {
+                double bill = double.tryParse(billAmountController.text) ?? 0;
+                await FirebaseFirestore.instance.collection('customers').add({
+                  'name': nameController.text,
+                  'phone': phoneController.text,
+                  'billAmount': bill,
+                  'measurements': {
+                    'chest': chestController.text,
+                    'waist': waistController.text,
+                    'hip': hipController.text,
+                    'length': lengthController.text,
+                    'shoulder': shoulderController.text,
+                  },
+                  'customizations': customNotesController.text,
+                  'createdAt': FieldValue.serverTimestamp(),
+                });
+                if (ctx.mounted) Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Save Customer'),
+          )
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('കസ്റ്റമർ ലിസ്റ്റ് & ബില്ലിംഗ്')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('customers').orderBy('createdAt', descending: true).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+          var docs = snapshot.data!.docs;
+          if (docs.isEmpty) return const Center(child: Text('കസ്റ്റമർമാർ ആരും ലഭ്യമല്ല.'));
+
+          return ListView.builder(
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              var data = docs[index].data() as Map<String, dynamic>;
+              var m = data['measurements'] ?? {};
+              double bill = (data['billAmount'] ?? 0).toDouble();
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: ExpansionTile(
+                  leading: const CircleAvatar(child: Icon(Icons.person)),
+                  title: Text(data['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Ph: ${data['phone']} | Bill: ₹$bill'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.send, color: Colors.green),
+                    tooltip: 'WhatsApp വഴി അയക്കുക',
+                    onPressed: () {
+                      _sendWhatsAppMessage(
+                        context: context,
+                        phone: data['phone'] ?? '',
+                        name: data['name'] ?? '',
+                        measurements: m,
+                        customization: data['customizations'] ?? '',
+                        billAmount: bill,
+                      );
+                    },
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('അളവുകൾ (Measurements):', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.purple)),
+                          Text('Chest: ${m['chest'] ?? "-"}, Waist: ${m['waist'] ?? "-"}, Hip: ${m['hip'] ?? "-"}'),
+                          Text('Length: ${m['length'] ?? "-"}, Shoulder: ${m['shoulder'] ?? "-"}'),
+                          const SizedBox(height: 8),
+                          const Text('കസ്റ്റമൈസേഷൻ:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.purple)),
+                          Text(data['customizations'] ?? 'പ്രത്യേകം ഒന്നുമില്ല'),
+                        ],
+                      ),
+                    )
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _addCustomerDialog(context),
+        child: const Icon(Icons.person_add),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// 3. EMPLOYEE MANAGEMENT SCREEN
+// ==========================================
+class EmployeeListScreen extends StatelessWidget {
+  const EmployeeListScreen({super.key});
+
+  void _addEmployeeDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    final salaryController = TextEditingController();
+    String role = 'Tailor';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('പുതിയ ജീവനക്കാരനെ ചേർക്കുക'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: nameController, decoration: const InputDecoration(labelText: 'പേര്')),
+            TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'ഫോൺ നമ്പർ')),
+            TextField(
+              controller: salaryController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'ശമ്പളം (₹) - ചെലവിലേക്ക് ഓട്ടോ പോകും'),
+            ),
+            DropdownButtonFormField<String>(
+              value: role,
+              items: const [
+                DropdownMenuItem(value: 'Tailor', child: Text('Tailor')),
+                DropdownMenuItem(value: 'Designer', child: Text('Designer')),
+                DropdownMenuItem(value: 'Sales', child: Text('Sales Executive')),
+                DropdownMenuItem(value: 'Master', child: Text('Cutting Master')),
+              ],
+              onChanged: (val) => role = val!,
+            )
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameController.text.isNotEmpty) {
+                await FirebaseFirestore.instance.collection('employees').add({
+                  'name': nameController.text,
+                  'phone': phoneController.text,
+                  'salary': double.tryParse(salaryController.text) ?? 0,
+                  'role': role,
+                  'createdAt': FieldValue.serverTimestamp(),
+                });
+                if (ctx.mounted) Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Save Employee'),
+          )
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('ജീവനക്കാരുടെ വിവരങ്ങൾ')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('employees').orderBy('createdAt', descending: true).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+
+          var docs = snapshot.data!.docs;
+          if (docs.isEmpty) return const Center(child: Text('ജീവനക്കാരെ ചേർത്തിട്ടില്ല.'));
+
+          return ListView.builder(
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              var data = docs[index].data() as Map<String, dynamic>;
+              return ListTile(
+                leading: const CircleAvatar(child: Icon(Icons.badge)),
+                title: Text(data['name'] ?? ''),
+                subtitle: Text('${data['role']} | Ph: ${data['phone']}'),
+                trailing: Text('₹${data['salary']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _addEmployeeDialog(context),
+        child: const Icon(Icons.person_add_alt_1),
+      ),
+    );
+  }
+}
